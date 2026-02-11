@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>狮城劳务通 - GitHub版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script> <!-- 解析Markdown -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap');
+        body { font-family: 'Noto Sans SC', sans-serif; background-color: #f8fafc; }
+        .poster-gradient { background: linear-gradient(135deg, #00266b 0%, #e11d2d 100%); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        /* 状态颜色 */
+        .status-hot { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; }
+        .status-full { background: #f3f4f6; color: #9ca3af; border: 1px solid #e5e7eb; filter: grayscale(1); }
+        .status-interview { background: #fef3c7; color: #d97706; border: 1px solid #fcd34d; }
+    </style>
+</head>
+<body class="text-slate-700">
+
+<div id="app" class="max-w-md mx-auto bg-white min-h-screen shadow-2xl relative pb-20">
+
+    <!-- 顶部 -->
+    <header class="bg-white/90 backdrop-blur-md sticky top-0 z-40 px-4 py-3 border-b flex justify-between items-center">
+        <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-slate-800 text-white flex items-center justify-center font-bold"><i class="fab fa-github"></i></div>
+            <h1 class="font-bold text-lg text-slate-800">狮城劳务通</h1>
+        </div>
+        <div class="flex gap-3">
+            <button @click="showCalculator = true" class="text-slate-500"><i class="fas fa-calculator"></i></button>
+            <button @click="generateDigest" class="text-slate-500"><i class="fas fa-newspaper"></i></button>
+            <a :href="adminUrl" target="_blank" class="text-slate-500 text-xs flex items-center gap-1 border px-2 py-1 rounded hover:bg-slate-100">
+                <i class="fas fa-plus"></i> 录入
+            </a>
+        </div>
+    </header>
+
+    <!-- 筛选 -->
+    <div class="px-4 py-3 bg-slate-50 border-b">
+        <input v-model="searchQuery" type="text" placeholder="搜职位 / 待遇..." class="w-full px-4 py-2 rounded-xl border-none bg-white shadow-sm outline-none text-sm mb-3">
+        <div class="flex gap-2 overflow-x-auto no-scrollbar">
+            <button v-for="type in ['全部', 'WP', 'SP', 'EP']" @click="filterType = type" 
+                :class="filterType === type ? 'bg-slate-800 text-white' : 'bg-white text-slate-600'"
+                class="px-4 py-1 rounded-full text-xs font-bold whitespace-nowrap border transition">{{ type }}</button>
+        </div>
+    </div>
+
+    <!-- 列表 -->
+    <div class="p-4 space-y-4 min-h-[50vh]">
+        <div v-if="loading" class="text-center py-10 text-slate-400">
+            <i class="fas fa-spinner fa-spin mr-2"></i>正在从 GitHub 获取岗位...
+        </div>
+        
+        <div v-else-if="filteredJobs.length === 0" class="text-center py-10 text-slate-400">
+            <div class="mb-2">📭</div>
+            暂无相关岗位，请去 Issues 发布
+        </div>
+
+        <div v-else v-for="job in filteredJobs" :key="job.id" 
+             class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 relative transition active:scale-[0.99]"
+             :class="{'opacity-60': job.status === '已满'}">
+            
+            <div class="absolute top-4 right-4 text-xs font-bold px-2 py-1 rounded-md" :class="getStatusClass(job.status)">{{ job.status }}</div>
+
+            <div class="flex items-center gap-2 mb-2">
+                <span class="bg-blue-50 text-blue-700 text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-100">{{ job.passType }}</span>
+                <h3 class="font-bold text-lg text-slate-800 truncate pr-12">{{ job.title }}</h3>
+            </div>
+
+            <div class="flex items-baseline gap-1 mb-3">
+                <span class="text-sm text-red-500 font-bold">$</span>
+                <span class="text-2xl text-red-600 font-bold">{{ job.salary }}</span>
+                <span class="text-xs text-slate-500">≈ ¥{{ (parseInt(job.salary) * 5.35).toFixed(0) }}</span>
+            </div>
+
+            <div class="flex flex-wrap gap-2 mb-4">
+                <span v-for="tag in job.tags" class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">#{{ tag }}</span>
+            </div>
+
+            <!-- 描述 (支持 Markdown) -->
+            <div class="text-sm text-slate-500 mb-4 line-clamp-3 bg-slate-50 p-2 rounded" v-html="renderMarkdown(job.desc)"></div>
+
+            <div class="flex justify-between items-center pt-3 border-t border-slate-50">
+                <span class="text-[10px] text-slate-400">{{ job.date }}</span>
+                <div class="flex gap-2">
+                    <button @click="copyText(job)" class="h-8 w-8 rounded-full bg-slate-50 text-slate-600 flex items-center justify-center"><i class="far fa-copy"></i></button>
+                    <button @click="preparePoster(job)" class="px-3 py-1.5 bg-slate-900 text-white text-xs rounded-lg shadow-lg flex items-center gap-1">
+                        <i class="fas fa-share-alt"></i> 海报
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 薪资计算器 -->
+    <div v-if="showCalculator" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white w-full max-w-xs rounded-2xl p-6 shadow-2xl relative">
+            <button @click="showCalculator = false" class="absolute top-4 right-4 text-slate-300"><i class="fas fa-times"></i></button>
+            <h3 class="font-bold text-lg mb-4 text-center">💰 薪资计算器</h3>
+            <div class="space-y-3 text-sm">
+                <div class="flex justify-between"><span class="text-slate-500">底薪 (SGD)</span><input v-model="calc.basic" type="number" class="w-20 text-right border-b font-bold"></div>
+                <div class="flex justify-between"><span class="text-slate-500">补贴</span><input v-model="calc.allowance" type="number" class="w-20 text-right border-b font-bold"></div>
+                <div class="flex justify-between"><span class="text-slate-500">加班 (小时)</span><input v-model="calc.otHours" type="number" class="w-20 text-right border-b font-bold"></div>
+                <div class="bg-slate-50 p-3 rounded-xl text-center mt-4">
+                    <div class="text-2xl font-bold text-red-600">¥ {{ calculateTotalRMB }}</div>
+                    <div class="text-xs text-slate-400">{{ calculateTotalSGD }} SGD</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 海报生成器 -->
+    <div v-if="posterMode" class="fixed inset-0 z-[60] bg-slate-900 flex flex-col items-center justify-center p-4">
+        <div class="text-white text-sm mb-2 font-bold flex items-center gap-2">
+            <label class="bg-white/20 px-2 py-1 rounded cursor-pointer text-xs font-normal"><i class="fas fa-qrcode mr-1"></i>换二维码<input type="file" @change="handleQRCodeUpload" class="hidden" accept="image/*"></label>
+            <button @click="posterMode = false" class="bg-white/20 px-2 py-1 rounded text-xs">关闭</button>
+        </div>
+        <div id="poster-canvas" class="w-[320px] bg-white rounded-xl overflow-hidden shadow-2xl relative">
+            <div class="h-36 poster-gradient p-6 text-white flex flex-col justify-between">
+                <div class="flex justify-between">
+                    <div><div class="text-2xl font-bold">SINGAPORE</div><div class="text-xs opacity-80">OFFICIAL RECRUITMENT</div></div>
+                    <div class="bg-white/20 px-2 py-1 rounded text-xs font-bold">{{ currentPosterJob?.passType }}</div>
+                </div>
+                <div class="text-3xl font-bold mt-2">{{ currentPosterJob?.salary }} <span class="text-sm font-normal opacity-80">SGD</span></div>
+            </div>
+            <div class="p-6 pb-4">
+                <h2 class="text-xl font-bold text-slate-800 mb-3">{{ currentPosterJob?.title }}</h2>
+                <div class="flex flex-wrap gap-2 mb-4">
+                    <span v-for="tag in currentPosterJob?.tags" class="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded">#{{ tag }}</span>
+                </div>
+                <div class="bg-slate-50 p-3 rounded-lg text-sm text-slate-600 mb-4 border border-slate-100">
+                    <p>✅ 综合收入：¥{{ (parseInt(currentPosterJob?.salary)*5.35).toFixed(0) }}</p>
+                    <div class="mt-1 line-clamp-3 text-xs" v-html="renderMarkdown(currentPosterJob?.desc)"></div>
+                </div>
+                <div class="flex items-center justify-between border-t border-dashed pt-4">
+                    <div><div class="font-bold text-slate-800 text-sm">扫码咨询详情</div><div class="text-[10px] text-slate-400">一手单源 · 正规劳务</div></div>
+                    <img :src="qrCodeUrl" class="w-14 h-14 object-cover rounded-lg border">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 早报生成器 -->
+    <div v-show="digestMode" class="fixed inset-0 z-[70] bg-black/90 flex flex-col items-center justify-center overflow-auto p-4">
+        <div class="text-white mb-4 font-bold">今日好单早报</div>
+        <div id="digest-canvas" class="w-[350px] bg-white relative rounded-xl overflow-hidden">
+            <div class="h-20 poster-gradient flex items-center justify-center text-white text-xl font-bold">📅 今日好单推荐</div>
+            <div class="p-4 bg-slate-50">
+                <div class="text-center text-xs text-slate-400 mb-4">{{ new Date().toLocaleDateString() }} 更新</div>
+                <div v-for="(job, index) in filteredJobs.slice(0, 6)" :key="index" class="bg-white p-3 mb-3 rounded-lg shadow-sm border flex justify-between items-center">
+                    <div class="w-2/3"><div class="font-bold text-slate-800 truncate">{{ job.title }}</div><div class="text-xs text-slate-400 mt-1">{{ job.passType }} | {{ job.tags[0] }}</div></div>
+                    <div class="text-right"><div class="text-red-600 font-bold">{{ job.salary }}</div><div class="text-[10px] text-slate-400">SGD</div></div>
+                </div>
+                <div class="mt-4 p-4 bg-white rounded-xl text-center border"><div class="text-sm font-bold text-slate-800 mb-2">扫码查看更多</div><img :src="qrCodeUrl" class="w-20 h-20 mx-auto"></div>
+            </div>
+        </div>
+        <button @click="digestMode = false" class="mt-4 text-white underline">关闭</button>
+    </div>
+
+</div>
+
+<script>
+    const { createApp, ref, computed, onMounted } = Vue;
+
+    // ================= 配置区域 (必填!) =================
+    const GITHUB_USERNAME = "你的GitHub用户名"; // 例如: "zhangsan"
+    const GITHUB_REPO = "你的仓库名";         // 例如: "sg-jobs"
+    // ===================================================
+
+    createApp({
+        setup() {
+            const jobs = ref([]);
+            const loading = ref(true);
+            const searchQuery = ref('');
+            const filterType = ref('全部');
+            const showCalculator = ref(false);
+            const posterMode = ref(false);
+            const digestMode = ref(false);
+            const currentPosterJob = ref(null);
+            const qrCodeUrl = ref('https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=HelloSG');
+            const calc = ref({ basic: 1500, allowance: 300, otHours: 50 });
+
+            // 生成去GitHub发帖的链接
+            const adminUrl = `https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}/issues/new`;
+
+            // 1. 从 GitHub Issues 获取数据
+            const fetchJobs = async () => {
+                if(GITHUB_USERNAME === "你的GitHub用户名") {
+                    // 演示数据
+                    jobs.value = [
+                        { id: 1, title: '请配置GitHub信息', salary: '9999', passType: 'EP', tags: ['演示'], desc: '请在代码中修改用户名和仓库名', status: '🔥急招', date: '2023/10/24' }
+                    ];
+                    loading.value = false;
+                    return;
+                }
+
+                try {
+                    // 调用 GitHub API (公开仓库不需要Token)
+                    const res = await fetch(`https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}/issues?state=open&per_page=100`);
+                    if(!res.ok) throw new Error('网络错误');
+                    const data = await res.json();
+
+                    jobs.value = data.map(issue => {
+                        // 解析标题: "职位名称 2500 WP"
+                        // 我们做一个简单的正则或者分割
+                        // 建议格式: 职位名称 | 薪资 | 准证
+                        let title = issue.title;
+                        let salary = "面议";
+                        let passType = "WP";
+                        
+                        // 尝试智能解析标题
+                        const parts = title.split(/[|｜]/); // 支持中英文竖线
+                        if(parts.length >= 2) {
+                            title = parts[0].trim();
+                            salary = parts[1].trim();
+                            if(parts[2]) passType = parts[2].trim();
+                        } else {
+                            // 如果没用竖线，尝试找数字
+                            const numMatch = title.match(/(\d{3,5})/);
+                            if(numMatch) salary = numMatch[1];
+                        }
+
+                        // 解析标签 (从 Body 里找 #标签)
+                        const tags = (issue.body.match(/#([\u4e00-\u9fa5\w]+)/g) || []).map(t => t.replace('#',''));
+                        
+                        // 解析状态 (通过 Issue 的 Label)
+                        let status = '🔥急招';
+                        const labelNames = issue.labels.map(l => l.name);
+                        if(labelNames.includes('已满')) status = '❌已满';
+                        if(labelNames.includes('面试中')) status = '⏳面试中';
+
+                        return {
+                            id: issue.id,
+                            title: title,
+                            salary: salary,
+                            passType: passType,
+                            tags: tags.length ? tags : ['急招'],
+                            desc: issue.body, // 保留 Markdown
+                            status: status,
+                            date: new Date(issue.created_at).toLocaleDateString()
+                        };
+                    });
+                } catch (error) {
+                    console.error(error);
+                    alert('获取数据失败，请检查GitHub用户名配置或网络');
+                } finally {
+                    loading.value = false;
+                }
+            };
+
+            // 2. 筛选
+            const filteredJobs = computed(() => {
+                return jobs.value.filter(job => {
+                    const matchSearch = job.title.includes(searchQuery.value) || job.desc.includes(searchQuery.value);
+                    const matchType = filterType.value === '全部' || job.passType === filterType.value;
+                    return matchSearch && matchType;
+                });
+            });
+
+            // 3. 计算器
+            const calculateTotalSGD = computed(() => {
+                const basic = parseFloat(calc.value.basic) || 0;
+                const allow = parseFloat(calc.value.allowance) || 0;
+                const ot = (parseFloat(calc.value.otHours) || 0) * (basic / 176 * 1.5);
+                return (basic + allow + ot).toFixed(0);
+            });
+            const calculateTotalRMB = computed(() => (calculateTotalSGD.value * 5.35).toFixed(0));
+
+            // 4. 辅助
+            const copyText = (job) => {
+                const cleanDesc = job.desc.replace(/[#*`]/g, ''); // 简单去除Markdown符号
+                const text = `🇸🇬【新加坡招聘】${job.title}\n💰 薪资：${job.salary} SGD\n🎫 准证：${job.passType}\n📝 详情：${cleanDesc.substring(0, 100)}...\n----------------\n有意者私聊！`;
+                navigator.clipboard.writeText(text).then(() => alert('文案已复制！'));
+            };
+
+            const getStatusClass = (status) => {
+                if(status.includes('已满')) return 'status-full';
+                if(status.includes('面试')) return 'status-interview';
+                return 'status-hot';
+            };
+
+            const renderMarkdown = (text) => {
+                if(!text) return '';
+                return marked.parse(text);
+            };
+
+            const handleQRCodeUpload = (event) => {
+                const file = event.target.files[0];
+                if(file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => qrCodeUrl.value = e.target.result;
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const preparePoster = (job) => {
+                currentPosterJob.value = job;
+                posterMode.value = true;
+                setTimeout(() => {
+                    const el = document.getElementById('poster-canvas');
+                    html2canvas(el, { scale: 2, backgroundColor: null }).then(canvas => {
+                        const img = document.createElement('img');
+                        img.src = canvas.toDataURL("image/png");
+                        img.className = "w-[320px] rounded-xl shadow-2xl mt-2";
+                        el.parentNode.replaceChild(img, el);
+                    });
+                }, 500);
+            };
+
+            const generateDigest = () => {
+                digestMode.value = true;
+                setTimeout(() => {
+                    const el = document.getElementById('digest-canvas');
+                    html2canvas(el, { scale: 2 }).then(canvas => {
+                        const img = document.createElement('img');
+                        img.src = canvas.toDataURL("image/png");
+                        img.className = "w-[350px] rounded-xl shadow-2xl";
+                        el.parentNode.replaceChild(img, el);
+                    });
+                }, 500);
+            };
+
+            onMounted(() => {
+                fetchJobs();
+            });
+
+            return {
+                jobs, loading, searchQuery, filterType, filteredJobs, showCalculator, adminUrl,
+                calc, calculateTotalSGD, calculateTotalRMB,
+                posterMode, digestMode, currentPosterJob, qrCodeUrl,
+                copyText, getStatusClass, renderMarkdown, handleQRCodeUpload, preparePoster, generateDigest
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
